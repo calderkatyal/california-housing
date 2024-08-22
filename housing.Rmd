@@ -1,0 +1,589 @@
+---
+title: "S&DS 230 Final Project"
+author: Calder Katyal"
+date: "May 4, 2024"
+urlcolor: blue
+output:
+  word_document: default
+  pdf_document: default 
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float:
+      collapsed: no
+    toc_depth: 5
+    number_sections: true
+---
+*Note: The code will take 15 seconds - 1 minute to run. This is expected. Please run all cells in order.*
+
+## Source: https://inria.github.io/scikit-learn-mooc/python_scripts/datasets_california_housing.html
+
+**Data Set Characteristics:**
+
+<!-- :Number of Instances: 20640 -->
+
+<!-- :Number of Attributes: 8 numeric, predictive attributes and the target -->
+
+<!-- :Attribute Information: -->
+<!--     - MedInc        median income in block group -->
+<!--     - HouseAge      median house age in block group -->
+<!--     - AveRooms      average number of rooms per household -->
+<!--     - AveBedrms     average number of bedrooms per household -->
+<!--     - Population    block group population -->
+<!--     - AveOccup      average number of household members -->
+<!--     - Latitude      block group latitude -->
+<!--     - Longitude     block group longitude -->
+
+## Access via https://drive.google.com/file/d/1sKw0uRbNhwnV6Q6ATd2oj0NPww50p5bS/view?usp=sharing
+
+"This dataset was derived from the 1990 U.S. census, using one row per census
+block group. A block group is the smallest geographical unit for which the U.S.
+Census Bureau publishes sample data (a block group typically has a population
+of 600 to 3,000 people)"
+
+# Requirements (Uncomment And Run As Needed)
+```{r}
+# install.packages("ggplot2")
+# install.packages("car")
+# install.packages("maps")
+# install.packages("dplyr")
+# install.packages("corrplot")
+# install.packages("leaps")
+# install.packages("lattice")
+```
+
+# Get and Clean Our Data
+
+## Get Our Data
+
+```{r message = FALSE}
+housing <- read.csv("housing.csv")
+dim(housing) #get dimensions
+names(housing)
+head(housing)
+```
+## Initial Cleaning
+```{r}
+# Drop rows with missing data
+(na_cols <- colnames(housing)[colSums(is.na(housing)) > 0])
+
+# No missing data
+
+# Convert latitude and longitude to numeric
+housing$Latitude <- as.numeric(as.character(housing$Latitude))
+housing$Longitude <- as.numeric(as.character(housing$Longitude))
+
+# Take a peek at our data
+head(housing)
+
+```
+
+## Capped Target
+
+*Halfway through our analysis, we noticed that the target is capped. Evidence is provided here:*
+
+```{r}
+for(column_name in names(housing )) {
+
+  if (column_name != "Long_bin" & column_name != "Lat_bin" & column_name != "Coast" & column_name != "IncomeLevel") {
+    max_value <- max(housing[[column_name]], na.rm = TRUE) 
+    min_value <- min(housing[[column_name]], na.rm = TRUE) 
+
+    count_max_value <- sum(housing[[column_name]] == max_value, na.rm = TRUE)  
+    count_min_value <- sum(housing[[column_name]] == min_value, na.rm = TRUE)  #
+
+    print(paste("Column:", column_name))
+    print(paste("Maximum value:", max_value))
+    print(paste("Count of maximum value:", count_max_value))
+    print(paste("Minimum value:", min_value))
+    print(paste("Count of mininum value:", count_min_value))
+    print("------------------------") 
+  }
+}
+```
+
+# Transform our Latitude and Longitude Data into Bins
+
+```{r}
+# Auxiliary function for aesthetics
+formatter <- function(x) paste("$", format(100000*x, scientific = FALSE))
+
+library(ggplot2)
+library(maps)
+library(dplyr)
+
+# Get t range of latitude and longitude for California
+lat_range <- range(housing$Latitude)
+long_range <- range(housing$Longitude)
+
+# Make breaks for latitude and longitude
+lat_breaks <- seq(from = lat_range[1], to = lat_range[2], length.out = 11) 
+long_breaks <- seq(from = long_range[1], to = long_range[2], length.out = 11)
+
+# Bin data using the breaks
+housing$Lat_bin <- cut(housing$Latitude, breaks = lat_breaks, include.lowest = TRUE, labels = FALSE)
+housing$Long_bin <- cut(housing$Longitude, breaks = long_breaks, include.lowest = TRUE, labels = FALSE)
+
+# Group by the binned factors and calculate the average housing price
+housing_grouped <- housing %>%
+  group_by(Lat_bin, Long_bin) %>%
+  summarize(avg_price = mean(MedHouseVal), .groups = 'drop')
+
+
+# Calculate the midpoints for each binned group
+housing_grouped <- housing_grouped %>%
+  mutate(
+    lat_mid = lat_breaks[as.numeric(Lat_bin)] + diff(lat_breaks)[1] / 2,
+    long_mid = long_breaks[as.numeric(Long_bin)] + diff(long_breaks)[1] / 2,
+    label = paste("(", Lat_bin, ",", Long_bin, ")")
+  )
+
+# Get base map data for California
+california_map <- map_data("state", region = "california")
+
+# Create base plot with the California map
+gg <- ggplot(data = california_map, aes(x = long, y = lat)) +
+  geom_polygon(aes(group = group), fill = "white", color = "black") +
+  coord_fixed(1.3) +
+  theme_void()
+
+# Add a tile layer to the plot colored by the average housing price
+gg <- gg +
+  geom_tile(data = housing_grouped, aes(x = long_mid, y = lat_mid, fill = avg_price), 
+            color = "white", size = 0.1, alpha = 0.8) +
+  geom_text(data = housing_grouped, aes(x = long_mid, y = lat_mid, label = label), 
+            color = "black", size = 2, vjust = 1, fontface = "bold") +
+  scale_fill_gradient(
+    name = "Average Housing Price", 
+    low = "darkseagreen1", 
+    high = "darkgreen", 
+    guide = guide_legend(label.position = "right"),
+    labels = formatter, 
+    breaks=
+  ) +
+  theme(legend.position = "right")
+
+housing$Lat_bin <- as.factor(housing$Lat_bin)
+housing$Long_bin <- as.factor(housing$Long_bin)
+
+print(gg)
+```
+
+*Because it is well-known that wealth in California is strongly correlated to geographic location, and longitude and latitude, being continuous, are not particularly great geospatial predictors in this instance, we decided to create three new variables: Long_bin, Lat_bin, and Coast. Only the latter was used in any model. To create a categorical geospatial predictor we use a technique called binning. We create 10 “bins” corresponding to equal ranges of latitude and longitude respectively and calculate the average house value  for all blocks located inside a given bin. Our bins are of the form B(X,Y) = {(X,Y) | 1 X10, 1Y10, (X,Y)ℤ} , where (1, 1) corresponds with the bottom-left corner of California if it were to be extended to a bounding rectangle. We created a visual of the bins via ggplot2, maps, and dplyr.*
+
+### Utility function to fetch the average price for a bin (x,y)
+```{r}
+fetch_avg_price <- function(housing_grouped, x, y) {
+  result <- housing_grouped %>%
+    filter(Lat_bin == x, Long_bin == y)
+    return(result$avg_price)  
+}
+fetch_avg_price(housing_grouped, 1, 10)
+```
+
+*For my own use.*
+
+### Creating a Categorical Variable
+
+*Our dataset lacks any categorical variables. Let's create one called "Coast" that tracks whether a given census block group is located on a coast or not! We will endow it with two values: "Yes" and "No." We will consider islands as part of coast.*
+
+```{r message=FALSE} 
+housing$Coast <- ifelse((housing$Lat_bin==10 & housing$Long_bin==10) | (housing$Lat_bin == 9 & housing$Long_bin == 9) |  (housing$Lat_bin == 8 & housing$Long_bin == 1) |  (housing$Lat_bin == 7 & housing$Long_bin == 1) |   (housing$Lat_bin == 7 & housing$Long_bin == 2) | (housing$Lat_bin == 6 & housing$Long_bin == 2) | (housing$Lat_bin == 6 & housing$Long_bin == 3) |(housing$Lat_bin == 5 & housing$Long_bin == 2) |  (housing$Lat_bin == 5 & housing$Long_bin == 3) | (housing$Lat_bin == 4 & housing$Long_bin == 3) |  (housing$Lat_bin == 4 & housing$Long_bin == 4) |  (housing$Lat_bin == 3 & housing$Long_bin == 4) | (housing$Lat_bin == 3 & housing$Long_bin == 5) | (housing$Lat_bin == 2 & housing$Long_bin == 5) | (housing$Lat_bin == 2 & housing$Long_bin == 6) | (housing$Lat_bin == 2 & housing$Long_bin == 7) |  (housing$Lat_bin == 1 & housing$Long_bin == 6) | (housing$Lat_bin == 1 & housing$Long_bin == 7) | (housing$Lat_bin == 1 & housing$Long_bin == 8), "Yes", "No")
+housing$Coast = factor(housing$Coast)
+attach(housing)
+```
+
+# Non Model-Specific Graphics
+
+## Boxplots
+
+```{r}
+library(ggplot2)
+
+ggplot(housing, aes(x = Coast, y = MedHouseVal, fill = Coast)) +
+    geom_boxplot() +
+    labs(title = "House Value Versus Coast", x = "Coast", y = "Median House Value") +
+    theme_minimal()
+```
+*This boxplot validates our assumption that blocks near the coast generally correspond with higher MedHouseVal. In the no coast plot, we see a narrow IQR and many outliers, which is indicative of significant variance within no coast blocks. Conversely, the IQR of the coast boxplot is large and we don’t see outliers. *
+
+## Scatterplots
+
+```{r}
+library(ggplot2)
+
+# Plot of Median House Value by Longitude
+ggplot(housing, aes(x = Longitude, y = MedHouseVal)) +
+  geom_point(color = "red", size = 2, shape = 19) +
+  labs(title = "Plot of Median House Value by Longitude") +
+  theme_minimal()
+
+# Plot of Median House Value by Latitude
+ggplot(housing, aes(x = Latitude, y = MedHouseVal)) +
+  geom_point(color = "pink", size = 2, shape = 19) +
+  labs(title = "Plot of Median House Value by Latitude") +
+  theme_minimal()
+
+# Plot of Median House Value by Median Age
+ggplot(housing, aes(x = HouseAge, y = MedHouseVal)) +
+  geom_point(color = "darkblue", size = 2, shape = 19) +
+  labs(title = "Plot of Median House Value by Median Age") +
+  theme_minimal()
+
+
+# Plot of Median House Value by Ave Rooms
+ggplot(housing, aes(x = AveRooms, y = MedHouseVal)) +
+  geom_point(color = "darkred", size = 2, shape = 19) +
+  labs(title = "Plot of Median House Value by Ave Rooms") +
+  theme_minimal()
+
+# Plot of Median House Value by Ave Bedrooms
+ggplot(housing, aes(x = AveBedrms, y = MedHouseVal)) +
+  geom_point(color = "blue", size = 2, shape = 19) +
+  labs(title = "Plot of Median House Value by Ave Bedrooms") +
+  theme_minimal()
+
+# Plot of Median House Value by Population
+ggplot(housing, aes(x = Population, y = MedHouseVal)) +
+  geom_point(color = "purple", size = 2, shape = 19) +
+  labs(title = "Plot of Median House Value by Population") +
+  theme_minimal()
+
+# Plot of Median House Value by Ave Occupancy
+ggplot(housing, aes(x = AveOccup, y = MedHouseVal)) +
+  geom_point(color = "orange", size = 2, shape = 19) +
+  labs(title = "Plot of Median House Value by Total Bedrooms") +
+  theme_minimal()
+
+
+# Plot of Median House Value by Median Income
+ggplot(housing, aes(x = MedInc, y = MedHouseVal)) +
+  geom_point(color = "darkgreen", size = 2, shape = 19) +
+  labs(title = "Plot of Median House Value by Median Income") +
+  theme_minimal()
+```
+
+*None of the scatterplots show any observable trends except for possibly Median House Value vs. Median Income (the plot in dark green) which shows a mildly linear relationship between the two variables. The main takeaway from these plots is that our data is extremely far from normality and the simple transformations are unlikely to help. *
+
+## Normal Quantile Plots
+
+
+```{r}
+library(car)
+qqPlot(housing$MedInc, col = "forestgreen", col.lines = "blue", pch = 19, ylab = "Median Income", xlab = "Normal Quantiles", cex = 1, main = "Q-Q Plot of Median House Value by Median Income")
+qqPlot(housing$HouseAge, col = "red", col.lines = "blue", pch = 19, ylab = "House Age", xlab = "Normal Quantiles", cex = 1, main="Q-Q Plot of Median House Age by Median Income")
+qqPlot(housing$AveRooms, col = "green", col.lines = "blue", pch = 19, ylab = "Average Rooms", xlab = "Normal Quantiles", cex = 1)
+qqPlot(housing$AveBedrms, col = "purple", col.lines = "blue", pch = 19, ylab = "Average Bedrooms", xlab = "Normal Quantiles", cex = 1)
+qqPlot(housing$Population, col = "orange", col.lines = "blue", pch = 19, ylab = "Population", xlab = "Normal Quantiles", cex = 1)
+qqPlot(housing$AveOccup, col = "darkgreen", col.lines = "blue", pch = 19, ylab = "Average Occupancy", xlab = "Normal Quantiles", cex = 1)
+qqPlot(housing$Latitude, col = "darkred", col.lines = "blue", pch = 19, ylab = "Latitude", xlab = "Normal Quantiles", cex = 1)
+qqPlot(housing$Longitude, col = "pink", col.lines = "blue", pch = 19, ylab = "Longitude", xlab = "Normal Quantiles", cex = 1)
+```
+
+*As seen above, the data quickly curves away from the blue envelope of normality. This indicates that our data is significantly skewed. Although normality of the predictors is not expected for our linear model, the entropy of the data is a harbinger of the difficulties to come.*
+
+## Histograms
+
+```{r}
+hist(housing$MedInc, main="Distribution of Median Income", xlab="Median Income", col="lightblue")
+hist(housing$MedHouseVal, main="Histogram of Median House Value", xlab="Median House Value", col="red")
+```
+
+*We first create a histogram of the target MedHouseVal. The data is significantly skewed to the right but lacks many values at the end signifying lowest median house value. Thus, our target is not normally distributed.  It is also worth looking more into the distribution of MedInc, as it was the only predictor that we saw in the scatter plots to be vaguely linear, and it also intuitively would seem to correlate with MedHouseVal. Its histogram is significantly right skewed due to the presence of a few blocks with extreme wealth. Thus MedInc lacks normality, and the presence of such significant outliers will complicate our modeling.*
+
+# Basic Tests
+
+## t-test
+
+```{r}
+t.test(MedHouseVal ~ Coast, data = housing)
+```
+*The null hypothesis for our t-test is that there is no significant difference in the means of MedHouseVal under the groups coast and no coast. As we get a mean of 1.1 for the no coast group and a mean of 2.4 for the coast group with p < 2e-16 <  = 0.05, we can reject the null hypothesis and conclude that coast significantly impacts the mean of MedHouseVal.*
+
+## Correlation Tests
+
+```{r}
+options(scipen = 0, digits = 2)
+library(corrplot)
+housing_cts <- housing[ , c("MedHouseVal","Longitude", "Latitude", "HouseAge", "AveRooms", "AveBedrms", "Population", "AveOccup", "MedInc")]
+correlations <- cor(housing_cts)
+round(correlations, 2)
+(sigcorr <- cor.mtest(housing_cts, conf.level = .95))
+```
+
+*The only predictor that appears to be highly correlated with MedHouseVal is MedInc, which has a positive correlation coefficient of 0.69.  Note that some of the predictors are correlated with each other, which suggests that we may have issues with multicollinearity in the future. All p-values are less than =0.05 and so suggest the statistical significance of our correlations.*
+
+```{r}
+library(corrplot)
+
+corrplot.mixed(cor(housing_cts, use = "pairwise.complete.obs"), 
+               lower.col = "black", 
+               upper = "ellipse", 
+               tl.col = "black", 
+               number.cex= 0.7, 
+               tl.pos = "lt", 
+               tl.cex= 0.7, 
+               p.mat = sigcorr$p)
+```
+
+## Bootstrap Confidence Intervals
+
+*For correlation between Median House Value and Median Income*
+
+```{r}
+options(digits = 7)
+n_samp <- 1000
+N <- nrow(housing)
+
+corResults <- rep(NA, n_samp)
+
+for (i in 1:n_samp) {
+  s <- sample(1:N, N, replace = TRUE)
+  fakeData <- housing[s, ]
+  corResults[i] <- cor(fakeData$MedInc, fakeData$MedHouseVal)
+}
+
+bootstrap_ci <- quantile(corResults, probs = c(0.025, 0.975))
+
+cor_test_result <- cor.test(housing$MedInc, housing$MedHouseVal)
+parametric_ci <- cor_test_result$conf.int
+hist(corResults, breaks = 30, main = "Bootstrap Distribution of Correlation Coefficients",
+     xlab = "Correlation Coefficient", col = "skyblue", border = "white")
+
+abline(v = bootstrap_ci, col = "red", lwd = 2, lty = 2)  
+abline(v = parametric_ci, col = "green", lwd = 2, lty = 2) 
+
+legend("topright", 
+       legend = c("Bootstrap CI", "Parametric CI"),
+       col = c("red", "green"), 
+       lty = 2, lwd = 2)
+
+print(parametric_ci)
+print(bootstrap_ci)
+```
+
+*Both confidence intervals are extremely close to each other (the particular distribution of the data makes the bootstrapped confidence interval marginally wider, but this is negligible). Thus our results confirm the suggested correlation between the two variables.*
+
+## Permutation Test with Histogram
+
+```{r}
+set.seed(123)
+N <- 3000
+diffvals <- numeric(N)
+for (i in 1:N) { 
+  fakecoast <- sample(housing$Coast)
+  diffvals[i] <- median(housing$MedHouseVal[fakecoast == "Yes"]) - median(housing$MedHouseVal[fakecoast == "No"])
+}
+
+actualdiff <- median(housing$MedHouseVal[housing$Coast == "Yes"]) - median(housing$MedHouseVal[housing$Coast == "No"])
+
+hist(diffvals, 
+    col = "yellow",
+    main = "Permuted Median Difference by Coastal Proximity",
+    xlab = "Price Difference (in USD 100000)",
+    breaks = 50, 
+    xlim = range(c(diffvals, actualdiff)))
+abline(v = actualdiff, col = "blue", lwd = 3)
+text(actualdiff-.05, 150, paste("Actual Diff in Medians =", round(actualdiff,
+2)), srt = 90)
+
+```
+*As we can see, the actual difference in medians is significantly higher than all of the values in our vector of permuted differences; thus we have a p-value of 0 for the test. The permutation test works by forming a large number random binary permutation of the values in Coast. For each permutation we take the difference in the medians of MedHouseVal for Coast = “Yes” and Coast = “No” and put it into a vector; finally, we plot this vector as a histogram in yellow and overlay a line representing the difference in medians of MedHouseVal at Coast = “Yes” and Coast = “No” for the whole dataset. The significant difference between the expected and calculated values suggests that Coast is far from random and approximately bifurcates MedHouseVal. *
+
+## Performing Best Subsets Regression 
+
+*We employ best subsets of linear regression to our data, which compares all possible models based on a set of predictors. For this model we include only the original predictors provided in our dataset as well as our indicator variable Coast; we do not include IncomeLevel as there are already a plethora of highly skewed, irregular continuous variables in our set of predictors. Lat_bin and Long_bin are not considered to prevent overfitting.*
+
+```{r}
+library(leaps)
+subsetReg <- regsubsets(housing$MedHouseVal ~ MedInc + HouseAge + AveRooms + AveBedrms + Population + AveOccup + Latitude + Longitude + Coast, data = housing, nvmax = ncol(housing)-1)
+(subsetReg_summary <- summary(subsetReg))
+```
+
+*Clearly the best predictor is MedInc, which is expected upon looking back at our preliminary scatter plots. Next, we identify the best model generated by best subsets regression under the Bayesian Information Criterion (BIC)* 
+
+### Finding the Single Best Predictor
+
+```{r}
+best_predictor <- which(subsetReg_summary$which[1, -1])
+best_predictor
+```
+
+### Best Model According to Bayesian Information Criteria (BIC)
+```{r}
+best_bic <- which.min(subsetReg_summary$bic)
+
+names(which(subsetReg_summary$which[which.min(subsetReg_summary$bic), -1]))
+
+```
+
+#### Fitting Best Model According to BIC
+
+```{r}
+housing_temp_bic <- housing[, c("MedHouseVal", "MedInc", "HouseAge", "AveRooms", "AveOccup", "Latitude", "Longitude", "Coast")]
+
+complex_model <- lm(MedHouseVal ~ ., data = housing_temp_bic) 
+summary(complex_model)
+```
+
+*Our model attains a R-squared of 0.6131 and an Adjusted R-squared of 0.6129, suggesting that it accounts for approximately 60% of the variance of the target (which is quite decent). The model is significant with a p-value of less than 2.2e-16. Unfortunately, this model includes eight predictors, comprising seven of our original predictors (population is excluded) as well as our categorical predictor Coast. All are statistically significant; MedInc, HouseAge, AveBedrms, and Coast have positive coefficients while the others are negative. In general this makes sense as all these predictors intuitively align with greater wealth and thus higher MedHouseVal. Latitude and Longitude have negative coefficients due to the geographical wealth distribution in California; the other negative predictors AveRooms and AveOccup have coefficients with very small magnitude and so their seemingly arbitrary direction is not too problematic. The non-intercept predictors with the greatest magnitude coefficients are MedInc, AveBedrms, Latitude, Longitude, and Coast. Having eight predictors in our model means that it is quite complex and does not align nicely with our intuition. It furthermore indicates that we might have difficulty attaining normality for the residuals, a condition often required of linear models. They are plotted here: *
+
+## Residual Plots
+
+```{r}
+myResPlots2(complex_model)
+```
+
+*From the first plot it is clear that the residuals are not approximately normal as points at the tails curve away from the blue envelope of normality. In the second plot we see that, instead of being randomly dispersed from the interval (-2, 2) as often desired, our studentized residuals form a distinctive sharped-edged parallelogram shape with many outliers. While this suggests heteroscedacity (non-constant variance of the residuals), we must not forget that our target is capped. This accounts for the sharp edges in our residuals and their distinctive shape. Analyses of similar datasets with uncapped targets tend to produce approximately normal distributions for residuals, especially when considering a variable such as MedHouseVal which is in many cases approximately normal itself. It is for these reasons that it is acceptable to further analyze the model. Nevertheless, it is worth seeing if we can improve the quality of the residuals. To do this, we utilize the Box-Cox Transformation:*
+
+## More Data Cleaning & Box-Cox
+
+
+```{r}
+trans <- boxCox(complex_model)
+(lambda <- trans$x[which.max(trans$y)])
+```
+
+*Applying a Box-Cox transformation to our previous model can rectify this problem. We calculate the   associated  with the Box-Cox Transform to be 0.14 which is near 0, which signifies it is worth attempting a logarathmic transformation to our target.*
+
+```{r message=FALSE}
+housing$LogMedHouseVal <- log(housing$MedHouseVal)
+
+attach(housing)
+
+housing_temp_boxcox <- housing[, c("LogMedHouseVal", "MedInc", "HouseAge", "AveRooms", "AveOccup", "Latitude", "Longitude", "Coast")]
+
+complex_model <- lm(LogMedHouseVal ~ ., data = housing_temp_boxcox) 
+
+summary(complex_model)
+```
+
+*The model has the same significant predictors as our prior model, but attains an extremely high multiple and adjusted R-squared of 0.917, suggesting that the model explains more than 90% of the variance in the target. We proceed to plot the residuals: *
+
+```{r}
+myResPlots2(boxcox_model)
+```
+
+*Unfortunately, the residuals are no more normal than in our prior model. However, this is likely due to the capped target, and our significant R-squared value of 0.917 suggests that this model is very effective at predicting the distribution of our target.*
+
+*If we want to attempt to attain normality of the residuals (which has debatable significance due to the capped target variable), a method that includes a continuous predictor will likely fail. This is because any association between the continuous predictor and the target will be immediately severed when the target reaches its capped value. By using categorical predictors, we can somewhat reduce this effect, while slightly compromising model quality. To this end, we make a new categorical predictor*
+
+```{r message=FALSE}
+
+# Using cut to create equal range bins
+housing$IncomeLevel <- cut(housing$MedInc, 
+                           breaks=quantile(housing$MedInc, probs=c(0, 0.33, 0.67, 1)), 
+                           include.lowest=TRUE, 
+                           labels=c("Low", "Medium", "High"))
+housing$IncomeLevel <- factor(housing$IncomeLevel)
+attach(housing)
+
+```
+
+
+*This predictor cuts MedInc into three equal range bins.*
+
+##Boxplot
+```{r}
+library(ggplot2)
+
+ggplot(housing, aes(x = IncomeLevel, y = MedHouseVal, fill = IncomeLevel)) +
+    geom_boxplot() +
+    labs(title = "House Value Versus Income Level", x = "Income Level", y = "Median House Value") +
+    theme_minimal()
+```
+
+*We see that median house value significantly rises with income level as expected. However, we have a large number of outliers for “Low” and “Medium”, suggesting a lack of normality. We further observe that the income level “High” has a large IQR, indicative of the large variance in wealth at the upper end of the spectrum.*
+
+```{r}
+simple_model <- lm(LogMedHouseVal ~ IncomeLevel + Coast, data = housing)
+summary(simple_model)
+
+```
+
+
+```{r}
+myResPlots2(simple_model)
+```
+
+*We have finally obtained approximate normality of the residuals to a modest degree. While the residuals certainly are not perfectly normally distributed (the left tail of the normal quantile plot curves away from the blue envelope of normality), this is a considerable and sufficient degree of normality considering the capped target. Although there are several outliers, the vast majority of studentized residuals fall in the range (-4,4), of which most are in the range (-2,2).*
+
+# Two-Way ANOVA
+
+## Interaction Plots
+
+
+```{r}
+par(mar=c(4, 4, 5, 0)) 
+interaction.plot(Coast, IncomeLevel, LogMedHouseVal, type = 'b', lwd = 3, 
+                 main = "Interaction Plot of Coast and Income Level", xlab = "Coast", ylab = "Mean of Log Median House Value", col=c("blue","green", "red"))
+```
+
+*From our interaction plot we see that there is significant interaction between Coast and Income Level at all levels. This justifies the notion that their interaction might be a significant predictor in our model.*
+
+```{r}
+aov1 <- aov(LogMedHouseVal ~ Coast + IncomeLevel + Coast*IncomeLevel)
+Anova(aov1, type = 'III')
+```
+
+*We see that both categorical variables as well as their interaction are all significant with associated p-values of less than =0.05. We have a sum of squares of 2846, suggesting that a considerable (but not overwhelming) portion of the variance in MedHouseVal is not explained by the predictors. *
+
+```{r}
+simple_model_2 <- lm(LogMedHouseVal ~ Coast + IncomeLevel + Coast*IncomeLevel)
+summary(simple_model_2)
+```
+
+*The model attains similar R-squared and residual standard error as our previous simple model. While the interaction effects are statistically significant, their associated coefficients are extremely small, thus not largely influencing the quality of our model.*
+
+```{r}
+myResPlots2(simple_model_2)
+```
+
+*The residuals are approximately as normal as in our original categorical-only model. While they are not perfectly normal (the right tail of the normal quantile plot again curves away from normality), the residuals are close enough to normal for our analysis to be of considerable significance.*
+
+
+```{r}
+interaction_groups <- interaction(Coast, IncomeLevel)
+
+std_devs <- tapply(LogMedHouseVal, interaction_groups, sd)
+
+# Find the maximum and minimum standard deviations
+max_sd <- max(std_devs)
+min_sd <- min(std_devs)
+
+# Calculate the ratio of the largest to the smallest standard deviation
+ratio_sd <- max_sd / min_sd
+
+cat("Largest SD:", max_sd, "\n")
+cat("Smallest SD:", min_sd, "\n")
+cat("Ratio of Largest to Smallest SD:", ratio_sd, "\n")
+```
+
+```{r}
+TukeyHSD(aov1)
+par(mar = c(5, 15, 4, 2))
+plot(TukeyHSD(aov1), las = 1)
+```
+
+```{r}
+plot(TukeyHSD(aov1), las = 1)
+```
+*The Tukey analysis reveals significant differences in LogMedHouseVal values across various combinations of coast and income levels. Particularly notable is the combination of high income and coastal, which shows a much higher median house value compared to low income and non-coastal, with a mean difference of 1.29. As none of the intervals in the plot cross the zero line, we have a statistically significant difference in means of MedHouseVal across all interaction groups. *
+
+
+# Conclusion
+
+*We have reached the end of our analysis for this dataset. In our exploration, we have come to discover why this dataset usually requires complicated machine learning models—the target is capped, none of the variables are normally distributed, and nonlinear terms might be needed to get a high accuracy model. Despite these limitations, however, we have fit three statistically significant models all with R-squared values of around 0.6. We created our own factor variables to fit a model with approximately normal residuals, allowing us to perform ANOVA and discover interaction effects between our predictors. While we ultimately suggest that a more robust model is needed or an enhanced dataset that does not have a capped target, we nevertheless believe that our models have successfully uncovered significant patterns and relationships that provide valuable insights into the dataset.*
+
+
+
+
+
+
+
+
+
+
+
+
+
